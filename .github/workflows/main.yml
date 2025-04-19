@@ -1,0 +1,84 @@
+name: Smart Bump Version on Dev Push
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  bump_version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Determine version bump type
+        id: bump_type
+        run: |
+          # Get latest commit message
+          commit_msg=$(git log -1 --pretty=%B)
+          echo "Commit message: $commit_msg"
+
+          # Default bump is patch
+          bump="patch"
+
+          # If commit message contains 'BREAKING CHANGE' or '!' → major bump
+          if echo "$commit_msg" | grep -qE "BREAKING CHANGE|!"; then
+            bump="major"
+          # Else if commit message starts with feat: → minor bump
+          elif echo "$commit_msg" | grep -qE "^feat:"; then
+            bump="minor"
+          fi
+
+          echo "Decided bump: $bump"
+
+          echo "bump=$bump" >> $GITHUB_ENV
+
+      - name: Bump version
+        id: bump
+        run: |
+          # Read current version
+          version=$(cat VERSION)
+          echo "Current version: $version"
+          
+          # Split into parts
+          IFS='.' read -r major minor patch <<< "$version"
+
+          case "${{ env.bump }}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          # New version
+          new_version="$major.$minor.$patch"
+          echo "New version: $new_version"
+
+          # Write new version back
+          echo "$new_version" > VERSION
+
+          # Export for next step
+          echo "new_version=$new_version" >> $GITHUB_ENV
+
+      - name: Commit and push version bump
+        run: |
+          git add VERSION
+          git commit -m "chore: bump version to ${{ env.new_version }}"
+          git push
