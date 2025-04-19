@@ -1,54 +1,56 @@
-name: Smart Bump Version on Dev Push
+name: Smart Version Bump on PR to Dev
 
 on:
-  push:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
     branches:
-      - main
+      - dev
 
 jobs:
   bump_version:
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write   # allow push and create tags/releases
+      pull-requests: write
+
     steps:
-      - name: Checkout repo
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref }}
 
       - name: Set up Git
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-      - name: Determine version bump type
+      - name: Determine bump type from PR title
         id: bump_type
         run: |
-          # Get latest commit message
-          commit_msg=$(git log -1 --pretty=%B)
-          echo "Commit message: $commit_msg"
+          pr_title="${{ github.event.pull_request.title }}"
+          echo "PR title: $pr_title"
 
-          # Default bump is patch
-          bump="patch"
+          bump="patch"  # default bump
 
-          # If commit message contains 'BREAKING CHANGE' or '!' → major bump
-          if echo "$commit_msg" | grep -qE "BREAKING CHANGE|!"; then
+          if echo "$pr_title" | grep -qE "BREAKING CHANGE|!"; then
             bump="major"
-          # Else if commit message starts with feat: → minor bump
-          elif echo "$commit_msg" | grep -qE "^feat:"; then
+          elif echo "$pr_title" | grep -qE "^feat:"; then
             bump="minor"
           fi
 
           echo "Decided bump: $bump"
-
           echo "bump=$bump" >> $GITHUB_ENV
 
       - name: Bump version
         id: bump
         run: |
-          # Read current version
+          # Read the current version
           version=$(cat VERSION)
           echo "Current version: $version"
-          
+
           # Split into parts
           IFS='.' read -r major minor patch <<< "$version"
 
@@ -67,18 +69,30 @@ jobs:
               ;;
           esac
 
-          # New version
+          # Build new version
           new_version="$major.$minor.$patch"
           echo "New version: $new_version"
 
-          # Write new version back
+          # Write new version to file
           echo "$new_version" > VERSION
 
-          # Export for next step
+          # Export for next steps
           echo "new_version=$new_version" >> $GITHUB_ENV
 
-      - name: Commit and push version bump
+      - name: Commit version bump
         run: |
           git add VERSION
-          git commit -m "chore: bump version to ${{ env.new_version }}"
+          git commit -m "chore: bump version to ${{ env.new_version }}" || echo "No changes to commit"
           git push
+
+      - name: Tag the new version
+        run: |
+          git tag "v${{ env.new_version }}"
+          git push origin "v${{ env.new_version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.new_version }}
+          name: v${{ env.new_version }}
+          body: "Automated release for version v${{ env.new_version }}"
